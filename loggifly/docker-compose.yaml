@@ -1,0 +1,62 @@
+# LoggiFly — watches container logs/events on the host and sends alerts.
+# Alerts are posted to a Buzz channel (mentioning an agent) via the
+# buzz-bridge service below.
+#
+# Deploy as a NEW Coolify resource on the same server as the apps to watch:
+#   Build Pack: Docker Compose
+#   Compose Location: /loggifly/docker-compose.yaml
+#
+# Required env vars (set in Coolify's UI for this resource):
+#   BUZZ_BOT_PRIVATE_KEY  hex or nsec — identity the alerts come from.
+#                         Generate with `nak key generate`
+#                         (https://github.com/fiatjaf/nak)
+#   BUZZ_ALERT_CHANNEL    UUID of the channel alerts are posted to.
+#                         Find it with `buzz channels list`.
+#   BUZZ_AGENT_PUBKEY     64-char hex pubkey of the buzz-acp agent to @mention,
+#                         so it picks the alert up and brings it up in the server.
+# Optional:
+#   BUZZ_RELAY_HTTP_URL   default https://buzz.xyz
+#   BUZZ_OWNER_PUBKEY     your hex pubkey — if set instead of BUZZ_ALERT_CHANNEL,
+#                         alerts come as DMs to you instead of channel posts.
+#   BRIDGE_TOKEN          shared secret; also add it to config.yaml's webhook
+#                         headers if set. Not needed while the bridge is only
+#                         reachable on this compose's internal network.
+#   BUZZ_DM_CHANNEL       DM mode only: skip auto-opening the DM; use this UUID.
+#
+# One-time setup on buzz.xyz:
+#   1. If the relay enforces membership (BUZZ_REQUIRE_RELAY_MEMBERSHIP):
+#        buzz-admin add-member <bot-pubkey>
+#   2. The bot joins open channels itself (kind:9021). For a private channel:
+#        buzz channels add-member --channel <uuid> --pubkey <bot-pubkey>
+#   3. On the agent's Coolify resource, let it answer the bot:
+#        BUZZ_ACP_RESPOND_TO=allowlist
+#        BUZZ_ACP_RESPOND_TO_ALLOWLIST=<bot-pubkey>
+
+services:
+  loggifly:
+    image: ghcr.io/clemcer/loggifly:v2
+    container_name: loggifly
+    # Direct docker socket access (not read-only) so container_action: restart works.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config:/config
+    environment:
+      TZ: ${TZ:-UTC}
+    depends_on:
+      - buzz-bridge
+    restart: unless-stopped
+
+  buzz-bridge:
+    build: ./bridge
+    container_name: buzz-bridge
+    environment:
+      BUZZ_RELAY_HTTP_URL: ${BUZZ_RELAY_HTTP_URL:-https://buzz.xyz}
+      BUZZ_BOT_PRIVATE_KEY: ${BUZZ_BOT_PRIVATE_KEY:?Set BUZZ_BOT_PRIVATE_KEY in Coolify env vars}
+      BUZZ_ALERT_CHANNEL: ${BUZZ_ALERT_CHANNEL:-}
+      BUZZ_AGENT_PUBKEY: ${BUZZ_AGENT_PUBKEY:-}
+      BUZZ_OWNER_PUBKEY: ${BUZZ_OWNER_PUBKEY:-}
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
+      BUZZ_DM_CHANNEL: ${BUZZ_DM_CHANNEL:-}
+      TZ: ${TZ:-UTC}
+    # No published ports: reachable only from loggifly on this network.
+    restart: unless-stopped

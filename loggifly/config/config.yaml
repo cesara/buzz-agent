@@ -1,0 +1,65 @@
+# LoggiFly config for the dfun deployments (api, landing, web).
+# Docs: https://clemcer.github.io/LoggiFly/guide/config/
+#
+# Alerts go to the buzz-bridge service (same compose stack), which delivers
+# them as Buzz DMs. LoggiFly POSTs the notification as JSON to the webhook below.
+#
+# IMPORTANT: Coolify names app containers by resource UUID (e.g. "x0g8s0wk..."),
+# so names are matched with globs below. To tighten this to exactly your three
+# dfun containers, run `docker ps --format '{{.Names}}'` on the server and put
+# those names in the rule's include list.
+
+version: 2
+
+settings:
+  log_level: INFO
+  multi_line_entries: true
+  reload_config: true
+
+notifications:
+  webhook:
+    url: http://buzz-bridge:8788/alert
+    # If you set BRIDGE_TOKEN on the buzz-bridge service, uncomment:
+    # headers:
+    #   Authorization: "Bearer <same-token>"
+
+containers:
+  # Never alert on LoggiFly/the bridge themselves or Coolify's own plumbing.
+  never_monitor:
+    container_names:
+      - loggifly
+      - buzz-bridge
+      - coolify
+      - coolify-proxy
+      - coolify-db
+      - coolify-redis
+      - coolify-realtime
+      - socket-proxy
+
+  rules:
+    # All remaining containers (i.e. your three dfun deployments).
+    # Replace "*" with the exact container names once you know them.
+    - id: dfun-apps
+      match:
+        include:
+          container_names: ["*"]
+      keywords:
+        - keyword: error
+          trigger_cooldown: 60
+        - keyword: fatal
+          attach_logfile: true
+        - keyword: panic
+          attach_logfile: true
+        - regex: "unhandled (exception|rejection)"
+        - keyword: "out of memory"
+          attach_logfile: true
+      container_events:
+        # Auto-restart on crash (exit code != 0), at most once per 5 minutes.
+        - event: crash
+          container_action: restart
+          container_action_cooldown: 300
+          title_template: "{{ container_name }} crashed (exit {{ exit_code }}) — restarting"
+        - event: oom
+          attach_logfile: true
+        - event: unhealthy
+          title_template: "{{ container_name }} is unhealthy"
