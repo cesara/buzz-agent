@@ -61,6 +61,15 @@ services:
       # The URL wins if both are set.
       BUZZ_AGENT_SNAPSHOT: '${BUZZ_AGENT_SNAPSHOT:-}'
       BUZZ_AGENT_SNAPSHOT_URL: '${BUZZ_AGENT_SNAPSHOT_URL:-}'
+      # Kimi Code's data dir, moved onto the work volume. ~/.kimi-code lives in
+      # the container filesystem, so OAuth credentials from `kimi login` would
+      # not survive a recreate — and without them `kimi acp` rejects every
+      # session/new with "Authentication required". On the volume they do, so
+      # login is a one-time `docker exec -it <container> kimi login`, not a
+      # per-boot step. Only the kimi CLI reads this; the other runtimes ignore
+      # it. Fixed wiring rather than a resource variable: a kimi agent without
+      # it is broken, so there is nothing to configure.
+      KIMI_CODE_HOME: /var/lib/buzz/work/kimi-home
     volumes:
       - 'agent-work:/var/lib/buzz/work'
       # The repo checkout — only populated when "Preserve Repository" is on.
