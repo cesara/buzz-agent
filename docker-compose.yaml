@@ -30,8 +30,9 @@
 
 services:
   agent:
-    # Built locally from Dockerfile.kimi, which layers Kimi Code onto the
-    # published buzz-agent image so `kimi acp` is available to buzz-acp.
+    # Built locally from Dockerfile.kimi, which compiles Buzz from source and
+    # adds Kimi Code so `kimi acp` is available to buzz-acp. Self-contained
+    # rather than FROM the published image, which is arm64-only.
     build:
       context: .
       dockerfile: Dockerfile.kimi

@@ -1,16 +1,108 @@
+# syntax=docker/dockerfile:1.7
+#
 # Buzz agent image with Kimi Code added, so buzz-acp can drive Kimi K3 over ACP.
-# Builds on the published buzz-agent image; only adds the kimi CLI and an SSH
-# client (for git-over-SSH access to the project repository).
+#
+# Self-contained: builds Buzz from source instead of layering onto the
+# published ghcr.io/onnokh/buzz-agent image, because that image is published
+# arm64-only and our Coolify server (pharah) is amd64 — a FROM on it fails the
+# first RUN with "exit code: 255" (exec format error). The two stages below
+# mirror ./Dockerfile (the base image build); the kimi additions are
+# openssh-client and the kimi CLI, marked "kimi:" where they deviate.
+# The build arg pins mirror Dockerfile too — bump them in both places.
 
-FROM ghcr.io/onnokh/buzz-agent:v0.4.26-13
-
-USER root
-
+ARG BUZZ_REPO=https://github.com/block/buzz.git
+ARG BUZZ_REF=v0.4.26
+ARG RUST_VERSION=1.95
+ARG DEBIAN_VERSION=bookworm
+ARG NODE_VERSION=24
+ARG OPENCODE_VERSION=1.18.5
 ARG KIMI_CODE_VERSION=0.30.0
 
+# ── Stage 1: Buzz agent binaries ─────────────────────────────────────────────
+FROM rust:${RUST_VERSION}-${DEBIAN_VERSION} AS builder
+
+ARG BUZZ_REPO
+ARG BUZZ_REF
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-client \
-    && npm install -g "@moonshot-ai/kimi-code@${KIMI_CODE_VERSION}" \
+    && apt-get install -y --no-install-recommends \
+        build-essential pkg-config libssl-dev ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /build
+RUN git clone --depth 1 --branch "${BUZZ_REF}" "${BUZZ_REPO}" .
+
+RUN cargo build --release --locked \
+        -p buzz-acp     --bin buzz-acp \
+        -p buzz-dev-mcp --bin buzz-dev-mcp \
+        -p buzz-cli     --bin buzz \
+        -p git-credential-nostr --bin git-credential-nostr \
+    && strip target/release/buzz-acp \
+             target/release/buzz-dev-mcp \
+             target/release/buzz \
+             target/release/git-credential-nostr
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-${DEBIAN_VERSION}-slim AS runtime
+
+# UID/GID 1001, not 1000: the node base image already occupies 1000 with its
+# own `node` user, so `groupadd --gid 1000` fails here (unlike the relay
+# Dockerfile, which starts from plain debian-slim).
+# kimi: openssh-client added — git-over-SSH access to the project repository.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl git openssl openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 1001 buzz \
+    && useradd  --system --uid 1001 --gid 1001 \
+                --home-dir /var/lib/buzz --create-home --shell /bin/bash buzz
+
+# Adapter installs globally, so it must happen as root — installing it after
+# `USER buzz` fails on /usr/local/lib/node_modules permissions.
+# mcp-picnic is baked in rather than fetched by `npx` at spawn time: the agent
+# would otherwise need npm registry access on every session start.
+#
+# opencode is pinned, unlike the other two: it ships its own ACP server
+# (`opencode acp`) and moves fast enough that an unpinned install would make two
+# builds of the same commit different agents.
+ARG OPENCODE_VERSION
+ARG KIMI_CODE_VERSION
+RUN npm install -g \
+        @agentclientprotocol/claude-agent-acp \
+        mcp-picnic \
+        "opencode-ai@${OPENCODE_VERSION}" \
+        "@moonshot-ai/kimi-code@${KIMI_CODE_VERSION}"
+
+# The image is the unit of deployment, so an agent updating its own binary at
+# boot is churn that a redeploy would undo anyway — and it would silently drift
+# from the version this image was built and tested with.
+ENV OPENCODE_DISABLE_AUTOUPDATE=1
+
+COPY --from=builder /build/target/release/buzz-acp              /usr/local/bin/buzz-acp
+COPY --from=builder /build/target/release/buzz-dev-mcp          /usr/local/bin/buzz-dev-mcp
+COPY --from=builder /build/target/release/buzz                  /usr/local/bin/buzz
+COPY --from=builder /build/target/release/git-credential-nostr  /usr/local/bin/git-credential-nostr
+
+COPY entrypoint.sh /usr/local/bin/agent-entrypoint.sh
+RUN chmod +x /usr/local/bin/agent-entrypoint.sh
+
+# Shared identity + behavior contract, prepended to every snapshot's own
+# systemPrompt at boot (see apply_snapshot in entrypoint.sh). Baked into the
+# image rather than fetched, so it needs a rebuild to change — unlike a
+# snapshot, which is a commit away. Worth it here: it establishes each
+# agent's own name in its prompt, which no per-agent snapshot did until now.
+COPY agents/base-system-prompt.md /etc/buzz/base-system-prompt.md
+
+# Pre-created as buzz:buzz so a volume mounted here inherits the ownership.
+# Docker creates a missing mount point as root:root — the same trap that broke
+# the relay's /data/git (block/buzz#2840).
+RUN mkdir -p /var/lib/buzz/work && chown buzz:buzz /var/lib/buzz/work
+
 USER buzz:buzz
+WORKDIR /var/lib/buzz
+
+# Claude Code CLI installs into ~/.local/bin for the invoking user.
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/var/lib/buzz/.local/bin:${PATH}"
+
+ENTRYPOINT ["/usr/local/bin/agent-entrypoint.sh"]
