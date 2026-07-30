@@ -72,16 +72,23 @@ check_opencode_auth() {
 # compose), written once by an interactive `kimi login` — there is no env-var
 # credential to check here. What this script *can* do is warn when the login
 # has never happened (otherwise the boot looks healthy and only the first
-# session/new fails with "Authentication required"), and set the permission
-# mode on the persisted config.
+# session/new fails with "Authentication required"), and pin two settings on
+# the persisted config.
 #
-# Why the mode has to be set here: buzz-acp's permission_mode=bypassPermissions
-# never reaches kimi. Kimi's ACP modes are default/plan/auto/yolo — there is no
-# bypassPermissions — and buzz only applies the mode when the session/new
-# response advertises it, so sessions run in kimi's "default" (manual
-# approvals) with buzz auto-approving every tool call over the wire. Writing
-# yolo into config.toml makes that approval internal instead: same effective
-# behavior, without the per-tool round trip.
+# Why the permission mode has to be set here: buzz-acp's
+# permission_mode=bypassPermissions never reaches kimi. Kimi's ACP modes are
+# default/plan/auto/yolo — there is no bypassPermissions — and buzz only
+# applies the mode when the session/new response advertises it, so sessions
+# run in kimi's "default" (manual approvals) with buzz auto-approving every
+# tool call over the wire. Writing yolo into config.toml makes that approval
+# internal instead: same effective behavior, without the per-tool round trip.
+#
+# default_model is *enforced*, not just defaulted: buzz-acp cannot switch
+# models on kimi over ACP — kimi's configOptions carry `id`, buzz matches
+# `configId`, the same mismatch the README documents for opencode — so the
+# persisted default IS the model every session runs, and the snapshot's model
+# (BUZZ_ACP_MODEL, already exported by apply_snapshot at this point) is the
+# source of truth.
 setup_kimi() {
     local home="${KIMI_CODE_HOME:-$HOME/.kimi-code}"
     local cfg="$home/config.toml"
@@ -92,18 +99,27 @@ setup_kimi() {
         echo "with 'Authentication required'." >&2
         return 0
     fi
-    # An existing default_permission_mode wins — it is someone's explicit
-    # choice on a persisted file, not a default to be corrected.
-    if grep -q '^default_permission_mode' "$cfg"; then
-        return 0
+
+    local model="${BUZZ_ACP_MODEL:-kimi-code/k3}"
+    if grep -q '^default_model' "$cfg"; then
+        sed -i "s|^default_model *=.*|default_model = \"${model}\"|" "$cfg"
+        echo "kimi: default_model = $model in $cfg"
     fi
-    # Prepend: top-level TOML keys must precede the first [table].
+
+    # Prepend whatever top-level keys are missing — they must precede the
+    # first [table]. An existing default_permission_mode wins: it is
+    # someone's explicit choice on a persisted file, not a default to be
+    # corrected.
+    local -a missing=()
+    grep -q '^default_model' "$cfg" || missing+=("default_model = \"${model}\"")
+    grep -q '^default_permission_mode' "$cfg" || missing+=('default_permission_mode = "yolo"')
+    ((${#missing[@]} == 0)) && return 0
+
     local tmp
     tmp="$(mktemp)"
-    printf 'default_permission_mode = "yolo"\n' | cat - "$cfg" > "$tmp" \
-        && cat "$tmp" > "$cfg"
+    printf '%s\n' "${missing[@]}" | cat - "$cfg" > "$tmp" && cat "$tmp" > "$cfg"
     rm -f "$tmp"
-    echo "kimi: set default_permission_mode = yolo in $cfg"
+    echo "kimi: set ${missing[*]} in $cfg"
 }
 
 # Register MCP servers on every boot. ~/.claude.json lives in the container
