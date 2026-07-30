@@ -1,0 +1,16 @@
+# Buzz agent image with Kimi Code added, so buzz-acp can drive Kimi K3 over ACP.
+# Builds on the published buzz-agent image; only adds the kimi CLI and an SSH
+# client (for git-over-SSH access to the project repository).
+
+FROM ghcr.io/onnokh/buzz-agent:v0.4.26-13
+
+USER root
+
+ARG KIMI_CODE_VERSION=0.30.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && npm install -g "@moonshot-ai/kimi-code@${KIMI_CODE_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
+
+USER buzz:buzz

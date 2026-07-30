@@ -30,16 +30,22 @@
 
 services:
   agent:
-    image: '${AGENT_IMAGE:-ghcr.io/onnokh/buzz-agent:v0.4.26-13}'
+    # Built locally from Dockerfile.kimi, which layers Kimi Code onto the
+    # published buzz-agent image so `kimi acp` is available to buzz-acp.
+    build:
+      context: .
+      dockerfile: Dockerfile.kimi
+    image: buzz-agent-kimi:0.30.0
     extra_hosts:
       - '${BUZZ_RELAY_DOMAIN}:host-gateway'
     environment:
       # Derived, so the relay is configured in one place.
       BUZZ_RELAY_URL: 'wss://${BUZZ_RELAY_DOMAIN}'
-      # Referencing the magic variable is what makes Coolify generate it, and
-      # it generates per resource — so every agent gets a distinct 64-hex
-      # identity and nobody has to handle a private key.
-      BUZZ_PRIVATE_KEY: '${SERVICE_HEX_64_AGENTKEY}'
+      # Known key instead of the Coolify magic variable: the relay enforces
+      # membership, so this agent's *public* key must be registered with
+      # `buzz-admin add-member` on the relay. Set BUZZ_AGENT_PRIVATE_KEY in the
+      # resource's environment to the secret half of that keypair.
+      BUZZ_PRIVATE_KEY: '${BUZZ_AGENT_PRIVATE_KEY}'
       # Persona. Two ways in, neither requiring an image rebuild:
       #
       #   BUZZ_AGENT_SNAPSHOT=/etc/buzz/agents/<name>.agent.json
