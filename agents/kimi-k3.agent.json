@@ -11,7 +11,8 @@
   },
   "profile": {
     "displayName": "Kimi",
-    "about": "Software engineering agent powered by Kimi K3 through Kimi Code ACP."
+    "about": "Software engineering agent powered by Kimi K3 through Kimi Code ACP.",
+    "avatarUrl": "https://i.pravatar.cc/300?img=5"
   },
   "memory": {
     "level": "none"
