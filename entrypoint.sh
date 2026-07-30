@@ -25,6 +25,7 @@ runtime_kind_for() {
     case "$(basename "$1")" in
         claude-agent-acp|claude-code-acp|claude-code|claude) echo claude ;;
         opencode)                                            echo opencode ;;
+        kimi)                                                echo kimi ;;
         *)                                                   echo other ;;
     esac
 }
@@ -65,6 +66,44 @@ check_opencode_auth() {
     echo "ERROR: no provider API key for opencode." >&2
     echo "Set the key your provider declares on models.dev — e.g. OPENCODE_API_KEY." >&2
     exit 1
+}
+
+# kimi: auth is OAuth state under $KIMI_CODE_HOME (on the work volume, per the
+# compose), written once by an interactive `kimi login` — there is no env-var
+# credential to check here. What this script *can* do is warn when the login
+# has never happened (otherwise the boot looks healthy and only the first
+# session/new fails with "Authentication required"), and set the permission
+# mode on the persisted config.
+#
+# Why the mode has to be set here: buzz-acp's permission_mode=bypassPermissions
+# never reaches kimi. Kimi's ACP modes are default/plan/auto/yolo — there is no
+# bypassPermissions — and buzz only applies the mode when the session/new
+# response advertises it, so sessions run in kimi's "default" (manual
+# approvals) with buzz auto-approving every tool call over the wire. Writing
+# yolo into config.toml makes that approval internal instead: same effective
+# behavior, without the per-tool round trip.
+setup_kimi() {
+    local home="${KIMI_CODE_HOME:-$HOME/.kimi-code}"
+    local cfg="$home/config.toml"
+    if [[ ! -f "$cfg" ]]; then
+        echo "WARNING: no kimi config at $cfg — the agent is not logged in." >&2
+        echo "Run 'docker exec -it <container> kimi login' once; credentials" >&2
+        echo "persist on the work volume. Until then every session/new fails" >&2
+        echo "with 'Authentication required'." >&2
+        return 0
+    fi
+    # An existing default_permission_mode wins — it is someone's explicit
+    # choice on a persisted file, not a default to be corrected.
+    if grep -q '^default_permission_mode' "$cfg"; then
+        return 0
+    fi
+    # Prepend: top-level TOML keys must precede the first [table].
+    local tmp
+    tmp="$(mktemp)"
+    printf 'default_permission_mode = "yolo"\n' | cat - "$cfg" > "$tmp" \
+        && cat "$tmp" > "$cfg"
+    rm -f "$tmp"
+    echo "kimi: set default_permission_mode = yolo in $cfg"
 }
 
 # Register MCP servers on every boot. ~/.claude.json lives in the container
@@ -417,6 +456,9 @@ case "$runtime" in
             echo "BUZZ_ACP_MODEL to provider/model." >&2
         fi
         write_opencode_config "$oc_model"
+        ;;
+    kimi)
+        setup_kimi
         ;;
 esac
 
