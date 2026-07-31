@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -59,6 +60,7 @@ PORT = int(os.environ.get("PORT", "8788"))
 
 EVENTS_URL = f"{RELAY}/events"
 MAX_MSG_LEN = 1800
+NAK_BIN = shutil.which("nak") or "/usr/local/bin/nak"
 
 _lock = threading.Lock()
 _dm_channel = os.environ.get("BUZZ_DM_CHANNEL", "")
@@ -67,7 +69,7 @@ _joined = False
 
 def nak_sign(kind, content, tags):
     """Build and sign an event offline with nak; returns the event dict."""
-    cmd = ["nak", "--sec", BOT_KEY, "event", "-k", str(kind), "-c", content]
+    cmd = [NAK_BIN, "--sec", BOT_KEY, "event", "-k", str(kind), "-c", content]
     for tag in tags:
         cmd += ["--tag", tag]
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
