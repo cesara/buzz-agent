@@ -1,12 +1,14 @@
-FROM python:3.12-alpine
+# Debian slim, not alpine: nak's release binaries are dynamically linked
+# against glibc and cannot run on musl.
+FROM python:3.12-slim
 
 ARG NAK_VERSION=0.20.2
 ARG TARGETARCH
 
-# nak = nostr army knife, used offline to sign events (static Go binary, works on musl).
-# TARGETARCH is only set by buildx; fall back to uname so plain `docker build`
-# (which Coolify may use) gets the right binary too. The final --version check
-# fails the build loudly if the download didn't produce a working binary.
+# nak = nostr army knife, used offline to sign events.
+# TARGETARCH is only set by buildx; fall back to uname for plain docker build.
+# Downloaded with python so no wget/curl dependency. The final --version
+# check fails the build loudly if the binary doesn't run on this base image.
 RUN set -eux; \
     arch="${TARGETARCH:-}"; \
     if [ -z "$arch" ]; then \
@@ -16,12 +18,13 @@ RUN set -eux; \
         *) echo "unsupported arch: $(uname -m)"; exit 1 ;; \
       esac; \
     fi; \
-    wget -O /usr/local/bin/nak \
-      "https://github.com/fiatjaf/nak/releases/download/v${NAK_VERSION}/nak-v${NAK_VERSION}-linux-${arch}"; \
+    python -c "import urllib.request; urllib.request.urlretrieve( \
+      'https://github.com/fiatjaf/nak/releases/download/v${NAK_VERSION}/nak-v${NAK_VERSION}-linux-' + '${arch}', \
+      '/usr/local/bin/nak')"; \
     chmod +x /usr/local/bin/nak; \
     /usr/local/bin/nak --version
 
-RUN adduser -D -u 10001 bridge
+RUN useradd -u 10001 bridge
 USER bridge
 
 COPY bridge.py /app/bridge.py
