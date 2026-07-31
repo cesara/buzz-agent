@@ -25,10 +25,11 @@ notifications:
 
 containers:
   # Never alert on LoggiFly/the bridge themselves or Coolify's own plumbing.
+  # Globs, because Coolify renames containers: buzz-bridge-<uuid>-<timestamp>.
   never_monitor:
     container_names:
-      - loggifly
-      - buzz-bridge
+      - "loggifly*"
+      - "buzz-bridge*"
       - coolify
       - coolify-proxy
       - coolify-db
@@ -45,13 +46,17 @@ containers:
           container_names: ["*"]
       keywords:
         - keyword: error
-          trigger_cooldown: 60
+          trigger_cooldown: 300
         - keyword: fatal
+          trigger_cooldown: 300
           attach_logfile: true
         - keyword: panic
+          trigger_cooldown: 300
           attach_logfile: true
         - regex: "unhandled (exception|rejection)"
+          trigger_cooldown: 300
         - keyword: "out of memory"
+          trigger_cooldown: 300
           attach_logfile: true
       container_events:
         # Auto-restart on crash (exit code != 0), at most once per 5 minutes.

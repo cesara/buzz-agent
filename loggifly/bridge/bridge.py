@@ -223,7 +223,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             log.error("failed to deliver alert: %s", e)
             self._reply(502, f"delivery failed: {e}")
             return
-        log.info("alert delivered: %.80s", text.replace("\n", " "))
+        log.info("alert delivered (%d chars)", len(text))
         self._reply(200, "delivered")
 
 
