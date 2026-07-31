@@ -45,7 +45,8 @@ containers:
         include:
           container_names: ["*"]
       keywords:
-        - keyword: error
+        # Structured JSON logs: match the level field, not the bare word.
+        - keyword: '"level":"ERROR"'
           trigger_cooldown: 300
         - keyword: fatal
           trigger_cooldown: 300
